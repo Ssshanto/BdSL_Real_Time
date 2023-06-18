@@ -103,114 +103,118 @@ from scipy.special import softmax
 import warnings
 warnings.filterwarnings('ignore')
 
-# (0) in VideoCapture is used to connect to your computer's default camera
-capture = cv2.VideoCapture(0)
- 
 # Initializing current time and precious time for calculating the FPS
 previousTime = 0
 currentTime = 0
 
-with mp_hands.Hands(
-    model_complexity=0,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5) as hands:
-    while capture.isOpened():
-        # capture frame by frame
-        ret, frame = capture.read()
+def predict_from_image(frame):
+    # resizing the frame for better view
+    image = cv2.resize(frame, (640, 480))
+    
+    with mp_hands.Hands(
+        model_complexity=0,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5) as hands:
+            
+            # Converting the from BGR to RGB
+            image.flags.writeable = False
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = hands.process(image)
+            image.flags.writeable = True
 
-        # resizing the frame for better view
-        image = cv2.resize(frame, (640, 480))
-        
-        # Converting the from BGR to RGB
-        image.flags.writeable = False
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(image)
-        image.flags.writeable = True
+            # Converting back the RGB image to BGR
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        # Converting back the RGB image to BGR
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            # print(results.multi_handedness)
+            handedness_list = results.multi_handedness
+            hand_landmarks_list = results.multi_hand_landmarks
 
-        # print(results.multi_handedness)
-        handedness_list = results.multi_handedness
-        hand_landmarks_list = results.multi_hand_landmarks
+            positions = []
 
-        positions = []
+            if results.multi_hand_landmarks:
+                for i in range(len(handedness_list)):
+                    # print(handedness_list[i].classification[0].label)
+                    if handedness_list[i].classification[0].label == 'Left': # label == 'Left' indicates Right hand as Mediapipe works in mirrored input
+                        mp_drawing.draw_landmarks(
+                            image,
+                            hand_landmarks_list[i],
+                            mp_hands.HAND_CONNECTIONS,
+                            mp_drawing_styles.get_default_hand_landmarks_style(),
+                            mp_drawing_styles.get_default_hand_connections_style())
+                        
+                        for landmark in hand_landmarks_list[i].landmark:
+                            positions.append(landmark.x)
+                            positions.append(landmark.y)
+                            positions.append(landmark.z)
 
-        if results.multi_hand_landmarks:
-            for i in range(len(handedness_list)):
-                # print(handedness_list[i].classification[0].label)
-                if handedness_list[i].classification[0].label == 'Left': # label == 'Left' indicates Right hand as Mediapipe works in mirrored input
-                    mp_drawing.draw_landmarks(
-                        image,
-                        hand_landmarks_list[i],
-                        mp_hands.HAND_CONNECTIONS,
-                        mp_drawing_styles.get_default_hand_landmarks_style(),
-                        mp_drawing_styles.get_default_hand_connections_style())
+            # Calculating the FPS
+            global currentTime, previousTime
+            currentTime = time.time()
+            fps = 1 / (currentTime-previousTime)
+            previousTime = currentTime
+
+            if len(positions) == 63:
+                    positions = np.array(positions)
+                    positions = (positions + 1) / 2
                     
-                    for landmark in hand_landmarks_list[i].landmark:
-                        positions.append(landmark.x)
-                        positions.append(landmark.y)
-                        positions.append(landmark.z)
-
-        # Calculating the FPS
-        currentTime = time.time()
-        fps = 1 / (currentTime-previousTime)
-        previousTime = currentTime
-
-        if len(positions) == 63:
-                positions = np.array(positions)
-                positions = (positions + 1) / 2
-                
-                batch_positions = np.array([positions,])
-                batch_predictions = model.predict(batch_positions)
-                
-                # Displaying predicted label on the image
-                # cv2.putText(image, "Prediction: " + str(int(pred_label)), (10, 400), cv2.FONT_HERSHEY_COMPLEX, 0.75, (255,255,255), 2)
-                
-                all_predictions = np.array(batch_predictions[0])
-                
-                scores = softmax(all_predictions)
-                # print(all_predictions, all_predictions.sum())
-                best_predictions = np.argsort(all_predictions)[::-1][:TOP_PREDICTIONS_NUM]
-                sorted_score = np.sort(scores)[::-1]
-                total_score = np.sum(sorted_score[:TOP_PREDICTIONS_NUM])
-                
-                for i in range(len(best_predictions)):
-                    prediction_image = bangla_character_images[int(best_predictions[i])]
-
-                    open_cv_image = np.array(prediction_image)
-                    # Convert RGB to BGR 
-                    prediction_image = open_cv_image[:, :, ::-1].copy() 
-
-                    height, width, channels = prediction_image.shape
-                    x, y = 300 + 30 * i, 10
-                    roi1 = image[x : x + height, y : y + width]
-                    result1 = cv2.addWeighted(roi1, 1, prediction_image, 1, 0)
-                    image[x : x + height, y : y + width] = result1
-
-                    percentage = 100 * (scores[best_predictions[i]] / total_score)
-                    # print(f"Percentage is: {percentage} {scores[best_predictions[i]]}, {total_score}")
-                    cv2.putText(image, generate_percentage_bar(percentage), (90, 300 + 30 * i + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    batch_positions = np.array([positions,])
+                    batch_predictions = model.predict(batch_positions)
                     
-                    # cv2.putText(image, str(int(fps))+" FPS", (10, 70), cv2.FONT_HERSHEY_COMPLEX, 0.5, (0,255,0), 2)
+                    # Displaying predicted label on the image
+                    # cv2.putText(image, "Prediction: " + str(int(pred_label)), (10, 400), cv2.FONT_HERSHEY_COMPLEX, 0.75, (255,255,255), 2)
+                    
+                    all_predictions = np.array(batch_predictions[0])
+                    
+                    scores = softmax(all_predictions)
+                    # print(all_predictions, all_predictions.sum())
+                    best_predictions = np.argsort(all_predictions)[::-1][:TOP_PREDICTIONS_NUM]
+                    sorted_score = np.sort(scores)[::-1]
+                    total_score = np.sum(sorted_score[:TOP_PREDICTIONS_NUM])
+                    
+                    for i in range(len(best_predictions)):
+                        prediction_image = bangla_character_images[int(best_predictions[i])]
 
-        # Displaying FPS on the image
-        cv2.putText(image, str(int(fps))+" FPS", (10, 70), cv2.FONT_HERSHEY_COMPLEX, 0.5, (0,255,0), 2)
-        
-        
-        # Display the resulting image
-        cv2.imshow("Hand Landmarks and BdSL Prediction", image)
+                        open_cv_image = np.array(prediction_image)
+                        # Convert RGB to BGR 
+                        prediction_image = open_cv_image[:, :, ::-1].copy() 
 
-        # Enter key 'q' to break the loop
-        
-        if cv2.waitKey(5) & 0xFF == ord('g'):
-            print("Landmarks: ")
-            for val in results.right_hand_landmarks.landmark:
-                print(val)
-            # print(results.right_hand_landmarks.landmark)
-        
-        if cv2.waitKey(5) & 0xFF == ord('q'):
-            break
+                        height, width, channels = prediction_image.shape
+                        x, y = 300 + 30 * i, 10
+                        roi1 = image[x : x + height, y : y + width]
+                        result1 = cv2.addWeighted(roi1, 1, prediction_image, 1, 0)
+                        image[x : x + height, y : y + width] = result1
+
+                        percentage = 100 * (scores[best_predictions[i]] / total_score)
+                        # print(f"Percentage is: {percentage} {scores[best_predictions[i]]}, {total_score}")
+                        cv2.putText(image, generate_percentage_bar(percentage), (90, 300 + 30 * i + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                        
+                        # cv2.putText(image, str(int(fps))+" FPS", (10, 70), cv2.FONT_HERSHEY_COMPLEX, 0.5, (0,255,0), 2)
+
+            # Displaying FPS on the image
+            cv2.putText(image, str(int(fps))+" FPS", (10, 70), cv2.FONT_HERSHEY_COMPLEX, 0.5, (0,255,0), 2)
+    
+    return image
+
+# (0) in VideoCapture is used to connect to your computer's default camera
+capture = cv2.VideoCapture(0)
+
+while capture.isOpened():
+    # capture frame by frame
+    ret, frame = capture.read()
+    image = predict_from_image(frame)
+    # Display the resulting image
+    cv2.imshow("Hand Landmarks and BdSL Prediction", image)
+
+    # Enter key 'q' to break the loop
+    
+    if cv2.waitKey(5) & 0xFF == ord('g'):
+        print("Landmarks: ")
+        for val in results.right_hand_landmarks.landmark:
+            print(val)
+        # print(results.right_hand_landmarks.landmark)
+    
+    if cv2.waitKey(5) & 0xFF == ord('q'):
+        break
 
     # When all the process is done
     # Release the capture and destroy all windows
